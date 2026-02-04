@@ -1,4 +1,5 @@
-# Intelligent Document Q\&A System
+# Intelligent Document Q&A System  
+**Author: Nidhi Kanwar — Junior AI Engineer | Generative AI | RAG Systems**
 
 An enterprise-grade, LLM-powered intelligent document analysis and question-answering system. The system leverages advanced NLP, vector databases, and modern async frameworks to process multi-format documents and provide contextually accurate answers optimized for insurance, legal, HR, and compliance domains.
 
