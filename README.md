@@ -46,7 +46,7 @@ An enterprise-grade, LLM-powered intelligent document analysis and question-answ
 
 ### **Development & Deployment**
 
-  - **Python** `3.10+` - Core runtime environment.
+  - **Python** `3.11.5` - Core runtime environment.
   - **python-dotenv** `>=1.0.0` - Environment variable management.
   - **python-multipart** `>=0.0.6` - File upload handling.
   - **Requests** - HTTP client for document downloading.
@@ -62,7 +62,7 @@ An enterprise-grade, LLM-powered intelligent document analysis and question-answ
 
 ## 📋 System Requirements
 
-  - **Python**: 3.10+
+  - **Python**: 3.11.5
   - **Memory**: 4GB+ RAM (for embedding models)
   - **Storage**: 2GB+ free space
   - **APIs**: Pinecone API Key, Groq API Key
@@ -80,8 +80,7 @@ cd document-qa-system
 
 # Create virtual environment
 python -m venv venv
-venv\Scripts\activate  # Windows
-# source venv/bin/activate  # Linux/Mac
+# source venv/bin/activate  #Mac
 
 # Upgrade pip
 python -m pip install --upgrade pip
