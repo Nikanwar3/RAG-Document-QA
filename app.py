@@ -3,12 +3,9 @@ from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from pipeline import process_document_and_answer
 from fastapi.responses import JSONResponse
-import os
+from config import HACKRX_TOKEN
 
 app = FastAPI()
-
-# Replace with HackRx team token
-HACKRX_TOKEN = "b689cc51239dbe57b19d7432235ab5fd0adc0ab7bd705f4cb51920ec4c53ce9e"
 
 
 class HackRxRequest(BaseModel):

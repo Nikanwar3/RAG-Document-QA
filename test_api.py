@@ -1,9 +1,10 @@
 import requests
 import time
+from config import HACKRX_TOKEN
 
 url = "http://localhost:8000/hackrx/run"
 headers = {
-    "Authorization": "Bearer b689cc51239dbe57b19d7432235ab5fd0adc0ab7bd705f4cb51920ec4c53ce9e",
+    "Authorization": f"Bearer {HACKRX_TOKEN}",
     "Content-Type": "application/json"
 }
 
