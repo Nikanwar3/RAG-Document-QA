@@ -1,495 +1,206 @@
-# Intelligent Document Q&A System  
+# RAG Document QA
+
 **Author: Nidhi Kanwar — Junior AI Engineer | Generative AI | RAG Systems**
 
-An enterprise-grade, LLM-powered intelligent document analysis and question-answering system. The system leverages advanced NLP, vector databases, and modern async frameworks to process multi-format documents and provide contextually accurate answers optimized for insurance, legal, HR, and compliance domains.
+An LLM-powered document question-answering service. Upload a document, it's
+processed asynchronously and embedded into Pinecone, and questions against it
+are answered by an LLM with retrieved context — cached in Redis and logged to
+Postgres for every request.
 
 -----
 
-## 🚀 Key Features
+## Architecture
 
-  - **Multi-format Document Processing**: Supports PDF, DOCX, DOC, EML, MSG files with intelligent text extraction.
-  - **Advanced Vector Search**: Pinecone-powered semantic similarity search with 384-dimensional embeddings.
-  - **LLM Integration**: Groq Cloud API with Llama3-8B-8192 model for ultra-fast inference.
-  - **Async Architecture**: FastAPI-based async processing for concurrent question handling.
-  - **Domain Optimization**: Specialized prompts with response length limits for precision and cost-efficiency.
-  - **Enterprise Security**: Bearer token authentication with proper error handling.
-  - **Production Ready**: Complete CI/CD pipeline with health monitoring and deployment configs.
+```
+User
+ │
+ ▼
+FastAPI  ──────────────────────────────────────────────────────────
+ │
+ ▼
+Authentication (JWT, bcrypt-hashed passwords)
+ │
+ ▼
+PostgreSQL  (users, documents, query_logs)
+ │
+ ▼
+Redis  (per-document answer cache, keyed by question hash)
+ │  cache miss
+ ▼
+Background Worker  (Celery, broker/backend on Redis — document ingestion:
+ │                   download → extract → chunk → embed)
+ ▼
+Pinecone  (vector search, namespaced per document)
+ │
+ ▼
+LLM  (Groq / Llama3-8B, via the OpenAI-compatible client)
+```
 
------
-
-## 🔧 Complete Tech Stack
-
-### **Backend Framework**
-
-  - **Uvicorn** `>=0.27.1` - Lightning-fast ASGI server with standard features.
-  - **Pydantic** - Data validation and settings management using Python type annotations.
-
-### **LLM & AI Infrastructure**
-
-  - **Groq Cloud API** - Ultra-fast LLM inference with Llama3-8B-8192 model.
-  - **OpenAI Python Client** `>=1.3.5` - Compatible client for Groq API integration.
-  - **SentenceTransformers** `>=2.2.2` - `all-MiniLM-L6-v2` model for embeddings (384 dimensions).
-  - **LangChain** `>=0.1.16` - LLM application framework for prompt engineering.
-
-### **Vector Database & Search**
-
-  - **Pinecone** `>=3.0.0` - Managed vector database for semantic search.
-  - **FAISS-CPU** `>=1.7.4` - Facebook AI Similarity Search for local vector operations.
-  - **NumPy** `>=1.24.0` - Numerical computing for vector operations.
-
-### **Document Processing**
-
-  - **PyMuPDF** `>=1.22.0` - Advanced PDF text extraction with OCR fallback.
-  - **python-docx** `>=1.0.0` - Microsoft Word document processing.
-  - **PDFPlumber** `>=0.10.2` - Alternative PDF processing for complex layouts.
-  - **Unstructured** `>=0.11.0` - Advanced document parsing and chunking.
-
-### **Development & Deployment**
-
-  - **Python** `3.11.5` - Core runtime environment.
-  - **python-dotenv** `>=1.0.0` - Environment variable management.
-  - **python-multipart** `>=0.0.6` - File upload handling.
-  - **Requests** - HTTP client for document downloading.
-
-### **Authentication & Security**
-
-  - Custom Bearer Token Authentication.
-  - Environment-based API key management.
-  - Input validation with Pydantic models.
-  - Proper HTTP status code handling.
+Document **ingestion** (download → extract → chunk → embed → upsert) runs on
+a Celery worker, off the request path, so uploading a large PDF doesn't block
+the API. **Querying** a ready document is synchronous: check the Redis cache
+first, and on a miss, do a Pinecone similarity search + LLM call, then cache
+and log the result.
 
 -----
 
-## 📋 System Requirements
+## Tech Stack
 
-  - **Python**: 3.11.5
-  - **Memory**: 4GB+ RAM (for embedding models)
-  - **Storage**: 2GB+ free space
-  - **APIs**: Pinecone API Key, Groq API Key
-  - **Network**: Stable internet for API calls and document downloads
+| Layer | Technology |
+| --- | --- |
+| API framework | FastAPI, Pydantic, async/await |
+| Auth | JWT (python-jose), bcrypt password hashing (passlib) |
+| Database | PostgreSQL, SQLAlchemy (async), Alembic migrations |
+| Cache | Redis |
+| Background jobs | Celery (Redis broker/backend) |
+| Vector search | Pinecone, SentenceTransformers (`all-MiniLM-L6-v2`) |
+| LLM | Groq Cloud (Llama3-8B-8192) via the OpenAI-compatible client |
+| Object storage | AWS S3 (boto3) — optional, falls back to direct URL download |
+| Containerization | Docker, docker-compose |
+| Testing | pytest, pytest-asyncio, httpx |
+| CI | GitHub Actions |
 
 -----
 
-## 🛠️ Installation & Setup
+## Project Layout
 
-### **1. Environment Setup**
+```
+app/
+├── main.py                 # FastAPI app, router registration, /health
+├── config.py                # Settings (env-driven, pydantic-settings)
+├── database.py               # Async SQLAlchemy engine/session
+├── models.py                 # User, Document, QueryLog ORM models
+├── schemas.py                 # Pydantic request/response models
+├── security.py                 # Password hashing, JWT issue/verify
+├── deps.py                     # get_current_user, shared dependencies
+├── cache.py                     # Redis-backed query cache
+├── routers/
+│   ├── auth.py                  # POST /auth/register, /auth/login
+│   ├── documents.py             # POST/GET /documents — ingestion + status
+│   ├── query.py                  # POST /query — cached Q&A
+│   └── hackrx.py                  # Legacy /hackrx/run (grader compatibility)
+├── services/
+│   ├── document_processor.py       # PDF/DOCX/EML text extraction + chunking
+│   ├── vector_store.py              # Pinecone embed/query, per-doc namespace
+│   ├── llm_client.py                 # Groq LLM call + prompt template
+│   └── storage.py                     # S3 upload/download, URL fallback
+└── worker/
+    ├── celery_app.py                    # Celery app (Redis broker/backend)
+    └── tasks.py                          # ingest_document_task
+
+alembic/                # DB migrations
+tests/                  # pytest suite (SQLite in-memory, mocked externals)
+scripts/                # Manual smoke-test scripts (not run by CI)
+```
+
+-----
+
+## Running Locally (Docker Compose)
 
 ```bash
-# Clone/Download the project
-cd document-qa-system
+cp .env.example .env
+# fill in GROQ_API_KEY, PINECONE_API_KEY, PINECONE_INDEX at minimum
 
-# Create virtual environment
-python -m venv venv
-# source venv/bin/activate  #Mac
-
-# Upgrade pip
-python -m pip install --upgrade pip
+docker compose up --build
 ```
 
-### **2. Install Dependencies**
+This starts Postgres, Redis, the API (after running `alembic upgrade head`),
+and a Celery worker. The API is live at `http://localhost:8000`, with
+interactive docs at `/docs`.
+
+### Running without Docker
 
 ```bash
-# Install all required packages
-pip install -r requirements.txt
+python -m venv venv && source venv/bin/activate
+pip install -r requirements-dev.txt
 
-# Verify installation
-pip list | findstr "fastapi\|uvicorn\|pinecone\|sentence-transformers"
-```
+# Postgres + Redis need to be running locally (or point DATABASE_URL /
+# REDIS_URL at hosted instances).
+alembic upgrade head
 
-### **3. API Configuration**
-
-Create a `.env` file in the project root:
-
-```env
-# LLM Configuration
-GROQ_API_KEY=your_groq_api_key_here
-
-# Vector Database Configuration
-PINECONE_API_KEY=your_pinecone_api_key_here
-PINECONE_INDEX=your_pinecone_index_name
-
-# Application Security
-API_SECRET_TOKEN=your_secure_bearer_token_here
-
-# Optional: Custom settings
-PYTHON_ENV=production
-LOG_LEVEL=INFO
-```
-
-### **4. Pinecone Index Setup**
-
-```python
-# Pinecone index configuration
-Index Dimension: 384  # For all-MiniLM-L6-v2 model
-Metric: cosine       # Cosine similarity
-Pods: 1             # Start with basic tier
+uvicorn app.main:app --reload          # terminal 1: API
+celery -A app.worker.celery_app worker --loglevel=info   # terminal 2: worker
 ```
 
 -----
 
-## 🏃‍♂️ Quick Start
+## API
 
-### **1. Start the Application**
+### `POST /auth/register` / `POST /auth/login`
 
-```bash
-# Development server
-uvicorn app:app --reload --host 0.0.0.0 --port 8000
+Register with `{email, password}`; login returns a JWT `access_token`. Every
+route below requires `Authorization: Bearer <token>`.
 
-# Or using Python directly
-python app.py
-```
-
-The API server starts on `http://localhost:8000` with automatic interactive documentation at `/docs`.
-
-### **2. Test API Endpoint**
-
-```bash
-# PowerShell/CMD test
-curl -X POST "http://localhost:8000/api/query" `
-  -H "Content-Type: application/json" `
-  -H "Authorization: Bearer your_secure_bearer_token_here" `
-  -d '{
-    "documents": "https://example.com/policy.pdf",
-    "questions": [
-      "What is the grace period for premium payment?",
-      "Does this policy cover maternity expenses?"
-    ]
-  }'
-```
-
-### **3. Use Test Script**
-
-```bash
-# Run comprehensive test
-python test_api.py
-
-# Expected output: A series of Q&A pairs with latency metrics
-```
-
------
-
-## 📁 Project Architecture
-
-```
-document-qa-system/
-├── app.py                    # FastAPI application & main API endpoint
-├── config.py                 # Environment configuration & API keys
-├── document_processor.py     # Multi-format document text extraction
-├── vector_store.py           # Pinecone vector operations & embeddings
-├── llm_client.py             # Groq LLM integration & prompt engineering
-├── pipeline.py               # Complete processing workflow orchestration
-├── test_api.py               # Comprehensive API testing with metrics
-├── requirements.txt          # Python dependencies specification
-└── README.md                 # Complete project documentation
-```
-
------
-
-## 🔧 Core System Components
-
-### **1. Document Processor** (`document_processor.py`)
-
-**Technologies**: PyMuPDF, python-docx, email library, regex
-
-**Features**:
-
-  - **PDF Processing**: Advanced text extraction with OCR fallback for scanned documents.
-  - **DOCX/DOC Support**: Complete document parsing including tables and metadata.
-  - **Email Processing**: EML/MSG files with header extraction and HTML stripping.
-  - **Smart Text Chunking**: Intelligent segmentation for optimal vector storage.
-  - **MIME Type Detection**: Automatic file format identification.
-
-### **2. Vector Store** (`vector_store.py`)
-
-**Technologies**: Pinecone, SentenceTransformers, NumPy
-
-**Technical Specifications**:
-
-  - **Embedding Model**: `all-MiniLM-L6-v2` (384 dimensions)
-  - **Vector Database**: Pinecone managed service
-  - **Similarity Metric**: Cosine similarity
-  - **Chunk Strategy**: Top-K retrieval (K=3)
-  - **Storage Format**: JSON metadata with text content
-
-### **3. LLM Client** (`llm_client.py`)
-
-**Technologies**: Groq Cloud API, OpenAI Client, Custom Prompt Engineering
-
-**Model Configuration**:
-
-  - **Model**: `Llama3-8B-8192` (8B parameters, 8192 context window)
-  - **Temperature**: `0.0` (deterministic responses)
-  - **Max Tokens**: `80` (enforced brevity)
-
-### **4. Processing Pipeline** (`pipeline.py`)
-
-**Technologies**: Asyncio, Requests, TempFile, URLParse
-
-**Workflow**:
-
-1.  **Document Download**: HTTP requests with error handling.
-2.  **Format Detection**: URL-based extension parsing.
-3.  **Temporary Storage**: Secure file handling with cleanup.
-4.  **Text Extraction**: Format-specific processing.
-5.  **Vector Storage**: Batch embedding and upsert.
-6.  **Concurrent Q\&A**: Async question processing.
-
-### **5. FastAPI Application** (`app.py`)
-
-**Technologies**: FastAPI, Pydantic, async/await, HTTP authentication
-
-**API Features**:
-
-  - **Async Endpoint**: Non-blocking request handling.
-  - **Data Validation**: Pydantic models for request/response.
-  - **Authentication**: Bearer token verification.
-  - **Error Handling**: Proper HTTP status codes and JSON responses.
-  - **Auto Documentation**: Swagger UI at `/docs`.
-
------
-
-## 🌐 API Documentation
-
-### **Endpoint**: `POST /api/query`
-
-**Purpose**: Process documents and answer questions with AI-powered analysis.
-
-**Authentication**:
-
-```http
-Authorization: Bearer your_secure_bearer_token_here
-Content-Type: application/json
-```
-
-**Request Schema**:
-
-```typescript
-interface QueryRequest {
-  documents: string; // Blob URL to document
-  questions: string[]; // Array of questions to answer
-}
-```
-
-**Response Schema**:
-
-```typescript
-interface QueryResponse {
-  answers: string[]; // Array of answers (same order as questions)
-}
-```
-
-**Sample Request**:
+### `POST /documents`
 
 ```json
-{
-  "documents": "https://example.blob.core.windows.net/assets/policy.pdf",
-  "questions": [
-    "What is the waiting period for pre-existing diseases?",
-    "Does this policy cover organ donor expenses?",
-    "What is the No Claim Discount (NCD) percentage?"
-  ]
-}
+{ "source_url": "https://example.com/policy.pdf", "filename": "policy.pdf" }
 ```
 
------
+Returns `202` with the document in `pending` status and hands ingestion off
+to the Celery worker.
 
-## 🎯 Supported Document Formats
+### `GET /documents/{id}` / `GET /documents`
 
-| Format | Extensions | Processing Technology | Features |
-| :--- | :--- | :--- | :--- |
-| **PDF** | `.pdf` | PyMuPDF (fitz) | OCR fallback, table extraction, metadata |
-| **Word** | `.docx`, `.doc` | python-docx | Table parsing, style preservation |
-| **Email** | `.eml`, `.msg` | email library | Header extraction, multipart handling, HTML stripping|
+Poll for status: `pending` → `processing` → `ready` (or `failed`, with
+`error_message` set).
 
------
-
-## ⚡ Performance & Optimization
-
-  - **Async Processing**: Concurrent question handling with asyncio for high throughput.
-  - **Smart Chunking**: Optimized text segmentation for better retrieval accuracy.
-  - **Vector Caching**: Efficient embedding storage and retrieval in Pinecone.
-  - **Token Optimization**: A 35-word response limit to reduce costs and improve speed.
-  - **Connection Pooling**: Persistent HTTP connections for API calls.
-  - **Horizontal Scaling**: Stateless design for multiple instance deployment.
-
------
-
-## 🔒 Security & Compliance
-
-  - **Authentication & Authorization**: Custom bearer token validation and environment-based secret management.
-  - **Data Security**: Secure temporary file handling with automatic cleanup. Documents are not stored persistently.
-  - **Privacy & Compliance**: Only necessary data is processed, and no sensitive information is retained. Comprehensive logging is available for auditing.
-
------
-
-## 🧪 Testing & Quality Assurance
-
-  - **Comprehensive Testing**: The `test_api.py` script covers document downloading, multi-format support, Q\&A accuracy, response validation, and error handling.
-  - **Quality Metrics**: The system targets \>90% response accuracy for domain-specific queries, 100% JSON schema adherence, and robust exception management.
-
------
-
-## 📊 System Architecture & Data Flow
-
-```mermaid
-graph TD
-    A[Client Request] --> B[FastAPI App]
-    B --> C[Authentication]
-    C --> D[Document Download]
-    D --> E[Format Detection]
-    E --> F[Text Extraction]
-    F --> G[Text Chunking]
-    G --> H[Vector Embeddings]
-    H --> I[Pinecone Storage]
-    I --> J[Question Processing]
-    J --> K[Vector Search]
-    K --> L[Context Retrieval]
-    L --> M[Groq LLM]
-    M --> N[Response Generation]
-    N --> O[JSON Response]
-
-    style A fill:#e1f5fe
-    style B fill:#f3e5f5
-    style M fill:#fff3e0
-    style I fill:#e8f5e8
-    style O fill:#fff9c4
-```
-
------
-
-## 🎮 Usage Examples & Use Cases
-
-### **1. Insurance Policy Analysis**
-
-Analyze health policies to extract information on coverage, sum insured, claim processes, and waiting periods.
-
-### **2. Legal Document Review**
-
-Review contracts and legal agreements to identify key clauses, obligations, termination conditions, and governing laws.
-
-### **3. HR Policy Consultation**
-
-Query employee handbooks to get quick answers on leave policies, remote work guidelines, and disciplinary procedures.
-
-### **4. Compliance Documentation**
-
-Scan compliance manuals to verify data protection requirements, audit procedures, and regulatory deadlines.
-
------
-
-## 🔧 Advanced Configuration
-
-### **Pinecone Setup (Detailed)**
+### `POST /query`
 
 ```json
-{
-    "name": "document-qa-index",
-    "dimension": 384,
-    "metric": "cosine",
-    "pod_type": "p1.x1",
-    "replicas": 1,
-    "shards": 1,
-    "metadata_config": {
-        "indexed": ["text"]
-    }
-}
+{ "document_id": "<uuid>", "question": "What is the grace period for premium payment?" }
 ```
 
-### **Groq API Configuration**
+Returns `409` until the document's status is `ready`. Answers are cached in
+Redis per `(document_id, question)` and every call is logged to the
+`query_logs` table with a `cache_hit` flag.
 
-```json
-{
-    "model": "llama3-8b-8192",
-    "temperature": 0.0,
-    "max_tokens": 80,
-    "top_p": 1.0,
-    "stream": false
-}
-```
+### `GET /health`
 
-### **Environment Variables (Complete)**
+Reports liveness of the API plus reachability of Postgres and Redis.
+
+### `POST /hackrx/run` (legacy)
+
+Preserved for backward compatibility with an existing hackathon grader
+contract — single-shot bearer-token auth (`HACKRX_TOKEN`), synchronous
+ingestion, no Postgres/Redis involved. New integrations should use the
+`/documents` + `/query` flow above instead.
+
+-----
+
+## Testing
 
 ```bash
-# Core API Keys
-GROQ_API_KEY=gsk_your_groq_api_key_here
-PINECONE_API_KEY=your_pinecone_api_key_here
-PINECONE_INDEX=document-qa-index
-
-# Application Security
-API_SECRET_TOKEN=b689cc51239dbe57b19d7432235ab5fd0adc0ab7bd705f4cb51920ec4c53ce9e
-
-# Optional Configuration
-EMBEDDING_MODEL=all-MiniLM-L6-v2
-MAX_CHUNK_SIZE=512
-CHUNK_OVERLAP=50
-TOP_K=3
-
-# Application Settings
-LOG_LEVEL=INFO
-DEBUG=false
+pytest -v
 ```
+
+Tests run against an in-memory SQLite database and mock out Pinecone, the
+Groq LLM call, Redis, and the Celery `.delay()` call — no external services
+or credentials required. CI (`.github/workflows/ci.yml`) additionally spins
+up real Postgres and Redis containers and does a Docker image build.
 
 -----
 
-## 🚀 Deployment & Production
-
-### **1. Production Server Setup**
+## Database Migrations
 
 ```bash
-# Install Gunicorn (for Linux/Mac)
-pip install gunicorn
-
-# Start with Gunicorn
-gunicorn app:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
-```
-
-### **2. Docker Deployment**
-
-```dockerfile
-# Dockerfile
-FROM python:3.10-slim
-
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-EXPOSE 8000
-
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-### **3. Health Monitoring**
-
-A health check endpoint can be added to monitor service status.
-
-```python
-# Add to app.py for health checks
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy"}
+alembic upgrade head                       # apply
+alembic revision -m "add some_column"       # generate a new migration
 ```
 
 -----
 
-## 🏆 Key Differentiators & Innovations
+## Supported Document Formats
 
-  - **Multi-Modal Processing**: Natively supports PDF, Word, and Email formats in a single pipeline.
-  - **Optimized Performance**: Achieves sub-3-second response times through an async design and ultra-fast LLM inference.
-  - **Scalable Architecture**: Built for high concurrency, supporting 50+ simultaneous requests with proper scaling.
-  - **Domain Expertise**: Uses tailored prompt engineering for high accuracy in specialized domains like insurance.
-  - **Production-Ready**: Comes with complete error handling, robust security, and comprehensive monitoring capabilities.
-  - **Contextual Chunking**: Employs intelligent text segmentation to improve the quality of context sent to the LLM.
-  - **Token Optimization**: Enforces response limits to minimize LLM costs and ensure concise answers.
+| Format | Extensions | Notes |
+| --- | --- | --- |
+| PDF | `.pdf` | PyMuPDF, block-fallback for scanned pages |
+| Word | `.docx`, `.doc` | Paragraphs + tables |
+| Email | `.eml`, `.msg` | Headers, multipart, HTML-stripped body |
 
 -----
 
-## 📝 License & Credits
+## License
 
-### **Open Source Components**
-
-  - **FastAPI**: MIT License - Modern Python web framework.
-  - **Transformers**: Apache 2.0 - HuggingFace transformers library.
-  - **PyMuPDF**: AGPL/Commercial - PDF processing library.
-  - **Pinecone**: Commercial - Vector database service.
-  - **Groq**: Commercial - LLM inference platform.
+Open-source components: FastAPI (MIT), SQLAlchemy (MIT), Celery (BSD),
+PyMuPDF (AGPL/Commercial), Pinecone (Commercial), Groq (Commercial).

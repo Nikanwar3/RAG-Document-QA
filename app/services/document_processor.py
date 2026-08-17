@@ -1,9 +1,9 @@
-import fitz
-import docx
 import email
-from email import policy
-from typing import List
 import mimetypes
+from email import policy
+
+import docx
+import pymupdf as fitz
 
 
 def extract_text_from_pdf(pdf_path: str) -> str:
@@ -14,9 +14,7 @@ def extract_text_from_pdf(pdf_path: str) -> str:
         text = page.get_text()
         if not text.strip():
             text = page.get_text("blocks")
-        full_text.append(
-            text if isinstance(text, str) else "\n".join([str(b) for b in text])
-        )
+        full_text.append(text if isinstance(text, str) else "\n".join(str(b) for b in text))
     return "\n".join(full_text)
 
 
@@ -25,18 +23,13 @@ def extract_text_from_docx(docx_path: str) -> str:
     doc = docx.Document(docx_path)
     full_text = []
 
-    # Extract paragraphs
     for paragraph in doc.paragraphs:
         if paragraph.text.strip():
             full_text.append(paragraph.text)
 
-    # Extract tables
     for table in doc.tables:
         for row in table.rows:
-            row_text = []
-            for cell in row.cells:
-                if cell.text.strip():
-                    row_text.append(cell.text.strip())
+            row_text = [cell.text.strip() for cell in row.cells if cell.text.strip()]
             if row_text:
                 full_text.append(" | ".join(row_text))
 
@@ -50,7 +43,6 @@ def extract_text_from_email(email_path: str) -> str:
 
     full_text = []
 
-    # Extract headers
     if msg["Subject"]:
         full_text.append(f"Subject: {msg['Subject']}")
     if msg["From"]:
@@ -60,9 +52,8 @@ def extract_text_from_email(email_path: str) -> str:
     if msg["Date"]:
         full_text.append(f"Date: {msg['Date']}")
 
-    full_text.append("")  # Empty line separator
+    full_text.append("")
 
-    # Extract body
     if msg.is_multipart():
         for part in msg.walk():
             content_type = part.get_content_type()
@@ -75,8 +66,7 @@ def extract_text_from_email(email_path: str) -> str:
                 if html_body:
                     import re
 
-                    clean_text = re.sub(r"<[^>]+>", "", html_body)
-                    full_text.append(clean_text)
+                    full_text.append(re.sub(r"<[^>]+>", "", html_body))
     else:
         body = msg.get_content()
         if body:
@@ -90,9 +80,9 @@ def extract_text_from_document(file_path: str) -> str:
 
     if file_ext == "pdf":
         return extract_text_from_pdf(file_path)
-    elif file_ext in ["docx", "doc"]:
+    elif file_ext in ("docx", "doc"):
         return extract_text_from_docx(file_path)
-    elif file_ext in ["eml", "msg", "email"]:
+    elif file_ext in ("eml", "msg", "email"):
         return extract_text_from_email(file_path)
     else:
         mime_type, _ = mimetypes.guess_type(file_path)
@@ -104,12 +94,10 @@ def extract_text_from_document(file_path: str) -> str:
             elif "message" in mime_type or "email" in mime_type:
                 return extract_text_from_email(file_path)
 
-        raise ValueError(
-            f"Unsupported file format: {file_ext}. Supported formats: PDF, DOCX, EML"
-        )
+        raise ValueError(f"Unsupported file format: {file_ext}. Supported formats: PDF, DOCX, EML")
 
 
-def chunk_text(text: str, chunk_size=500, overlap=50) -> List[str]:
+def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
     """Split text into chunks."""
     lines = text.split("\n")
     chunks = []
