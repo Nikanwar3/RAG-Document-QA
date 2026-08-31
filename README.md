@@ -33,7 +33,7 @@ Background Worker  (Celery, broker/backend on Redis — document ingestion:
 Pinecone  (vector search, namespaced per document)
  │
  ▼
-LLM  (Groq / Llama3-8B, via the OpenAI-compatible client)
+LLM  (Groq / Llama3-8B, via LangChain's ChatGroq)
 ```
 
 Document **ingestion** (download → extract → chunk → embed → upsert) runs on
@@ -41,6 +41,22 @@ a Celery worker, off the request path, so uploading a large PDF doesn't block
 the API. **Querying** a ready document is synchronous: check the Redis cache
 first, and on a miss, do a Pinecone similarity search + LLM call, then cache
 and log the result.
+
+Two query paths share that Pinecone/Groq foundation but differ in how much
+reasoning happens around the retrieval:
+
+- **`POST /query`** — one retrieve, one generate. Cheapest path.
+- **`POST /query/agent`** — a LangGraph agent (`app/services/qa_agent.py`)
+  that grades whether the retrieved chunks actually answer the question
+  before generating, and rewrites the search query and retries retrieval
+  (capped at 2 attempts) if they don't — a self-correcting ("Corrective
+  RAG") flow instead of confidently answering off a bad first retrieval:
+
+  ```
+  retrieve → grade →[relevant, or out of retries]→ generate → done
+               │
+               └──[not relevant, retries left]──→ rewrite query → retrieve (loop)
+  ```
 
 -----
 
@@ -54,7 +70,8 @@ and log the result.
 | Cache | Redis |
 | Background jobs | Celery (Redis broker/backend) |
 | Vector search | Pinecone, SentenceTransformers (`all-MiniLM-L6-v2`) |
-| LLM | Groq Cloud (Llama3-8B-8192) via the OpenAI-compatible client |
+| LLM | Groq Cloud (Llama3-8B-8192) via LangChain (`ChatGroq`, LCEL) |
+| Agent orchestration | LangGraph — corrective-RAG `StateGraph` behind `POST /query/agent` |
 | Object storage | AWS S3 (boto3) — optional, falls back to direct URL download |
 | Containerization | Docker, docker-compose |
 | Testing | pytest, pytest-asyncio, httpx |
@@ -77,12 +94,13 @@ app/
 ├── routers/
 │   ├── auth.py                  # POST /auth/register, /auth/login
 │   ├── documents.py             # POST/GET /documents — ingestion + status
-│   ├── query.py                  # POST /query — cached Q&A
+│   ├── query.py                  # POST /query, POST /query/agent — cached Q&A
 │   └── hackrx.py                  # Legacy /hackrx/run (grader compatibility)
 ├── services/
 │   ├── document_processor.py       # PDF/DOCX/EML text extraction + chunking
 │   ├── vector_store.py              # Pinecone embed/query, per-doc namespace
-│   ├── llm_client.py                 # Groq LLM call + prompt template
+│   ├── llm_client.py                 # ChatGroq call (LangChain LCEL) + prompt
+│   ├── qa_agent.py                    # LangGraph corrective-RAG agent
 │   └── storage.py                     # S3 upload/download, URL fallback
 └── worker/
     ├── celery_app.py                    # Celery app (Redis broker/backend)
@@ -154,6 +172,19 @@ Poll for status: `pending` → `processing` → `ready` (or `failed`, with
 Returns `409` until the document's status is `ready`. Answers are cached in
 Redis per `(document_id, question)` and every call is logged to the
 `query_logs` table with a `cache_hit` flag.
+
+### `POST /query/agent`
+
+Same request/response shape as `POST /query`, answered by the LangGraph
+agent instead of a single retrieve-then-generate pass:
+
+```json
+{ "question": "...", "answer": "...", "cache_hit": false, "retrieval_attempts": 2, "query_rewritten": true }
+```
+
+`retrieval_attempts` and `query_rewritten` surface whether the agent had to
+grade the first retrieval as irrelevant and self-correct — see
+`app/services/qa_agent.py` for the graph.
 
 ### `GET /health`
 
