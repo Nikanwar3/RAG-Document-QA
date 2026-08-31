@@ -51,6 +51,14 @@ class QueryResponse(BaseModel):
     cache_hit: bool
 
 
+class QueryAgentResponse(BaseModel):
+    question: str
+    answer: str
+    cache_hit: bool
+    retrieval_attempts: int
+    query_rewritten: bool
+
+
 class HealthResponse(BaseModel):
     status: str
     database: str
