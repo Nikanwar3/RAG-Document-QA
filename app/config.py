@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     pinecone_index: str | None = None
     embedding_model: str = "all-MiniLM-L6-v2"
 
+    # --- Graph database (Neo4j) — optional enrichment layer; ingestion logs a
+    # warning and continues without it if unset/unreachable (see worker/tasks.py) ---
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = "change-me-in-prod"
+
     # --- Legacy HackRx grader endpoint (kept for backward compatibility) ---
     hackrx_token: str | None = None
 

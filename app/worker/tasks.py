@@ -1,3 +1,4 @@
+import logging
 import os
 import uuid
 
@@ -6,8 +7,10 @@ from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
 from app.models import Document, DocumentStatus
-from app.services import document_processor, storage, vector_store
+from app.services import document_processor, graph_store, storage, vector_store
 from app.worker.celery_app import celery_app
+
+logger = logging.getLogger(__name__)
 
 # Celery tasks run outside the asyncio event loop, so the worker gets its own
 # plain synchronous SQLAlchemy engine (psycopg2) rather than sharing the API's
@@ -47,6 +50,17 @@ def ingest_document_task(self, document_id: str):
             raise ValueError("No chunks created from document text")
 
         vector_store.embed_and_store_chunks(chunks, namespace=document.namespace)
+
+        # Best-effort enrichment: the knowledge graph makes graph_augment_node
+        # (app.services.qa_agent) able to resolve related entities at query
+        # time, but a document is fully usable for Q&A without it - so a
+        # failure here (LLM extraction error, Neo4j unreachable) is logged
+        # and swallowed rather than failing the whole ingestion.
+        try:
+            relations = graph_store.extract_relations(text)
+            graph_store.store_relations(document.namespace, relations)
+        except Exception:
+            logger.warning("Graph extraction failed for document %s", document_id, exc_info=True)
 
         document.status = DocumentStatus.READY
         document.error_message = None

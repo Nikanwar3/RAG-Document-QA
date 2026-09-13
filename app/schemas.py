@@ -57,6 +57,20 @@ class QueryAgentResponse(BaseModel):
     cache_hit: bool
     retrieval_attempts: int
     query_rewritten: bool
+    # Defaults to False so a cache-hit response (which never re-runs the
+    # graph) doesn't have to fake a value for a field that has no meaning
+    # there - same reasoning as retrieval_attempts=0 on a cache hit.
+    graph_augmented: bool = False
+
+
+class RelationOut(BaseModel):
+    subject: str
+    predicate: str
+    object: str
+
+
+class DocumentGraphOut(BaseModel):
+    relations: list[RelationOut]
 
 
 class HealthResponse(BaseModel):

@@ -5,8 +5,11 @@ from sqlalchemy import text
 
 from app.cache import redis_client
 from app.database import Base, engine
+from app.observability import RequestLoggingMiddleware, configure_logging
 from app.routers import auth, documents, hackrx, query
 from app.schemas import HealthResponse
+
+configure_logging()
 
 
 @asynccontextmanager
@@ -19,6 +22,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="RAG Document QA", version="2.0.0", lifespan=lifespan)
+app.add_middleware(RequestLoggingMiddleware)
 
 app.include_router(auth.router)
 app.include_router(documents.router)

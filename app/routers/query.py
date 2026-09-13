@@ -90,4 +90,5 @@ async def ask_question_agent(
         cache_hit=False,
         retrieval_attempts=result["retrieval_attempts"],
         query_rewritten=result["query_rewritten"],
+        graph_augmented=result.get("graph_augmented", False),
     )

@@ -59,3 +59,47 @@ async def test_documents_are_scoped_per_user(client, monkeypatch):
 
     response = await client.get(f"/documents/{document_id}", headers=other_headers)
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_document_graph_returns_extracted_relations(client, monkeypatch):
+    from app.routers import documents as documents_router
+    from app.services.graph_store import Relation
+
+    monkeypatch.setattr(documents_router.ingest_document_task, "delay", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        documents_router.graph_store,
+        "get_relations",
+        lambda namespace: [Relation(subject="Policyholder", predicate="must pay", object="Premium")],
+    )
+
+    headers = await _auth_headers(client, email="graph-user@example.com")
+    create_resp = await client.post(
+        "/documents", json={"source_url": "https://example.com/a.pdf"}, headers=headers
+    )
+    document_id = create_resp.json()["id"]
+
+    response = await client.get(f"/documents/{document_id}/graph", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "relations": [{"subject": "Policyholder", "predicate": "must pay", "object": "Premium"}]
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_document_graph_not_found_for_other_users_document(client, monkeypatch):
+    from app.routers import documents as documents_router
+
+    monkeypatch.setattr(documents_router.ingest_document_task, "delay", lambda *a, **kw: None)
+
+    owner_headers = await _auth_headers(client, email="graph-owner@example.com")
+    other_headers = await _auth_headers(client, email="graph-other@example.com")
+
+    create_resp = await client.post(
+        "/documents", json={"source_url": "https://example.com/a.pdf"}, headers=owner_headers
+    )
+    document_id = create_resp.json()["id"]
+
+    response = await client.get(f"/documents/{document_id}/graph", headers=other_headers)
+    assert response.status_code == 404
