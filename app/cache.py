@@ -1,4 +1,5 @@
 import hashlib
+import json
 
 import redis.asyncio as redis
 
@@ -14,13 +15,15 @@ def build_cache_key(document_id: str, question: str) -> str:
     return f"qa:{document_id}:{digest}"
 
 
-async def get_cached_answer(document_id: str, question: str) -> str | None:
-    return await redis_client.get(build_cache_key(document_id, question))
+async def get_cached_answer(document_id: str, question: str) -> dict | None:
+    """Returns {"answer": str, "sources": list[dict]} on a cache hit, else None."""
+    cached = await redis_client.get(build_cache_key(document_id, question))
+    return json.loads(cached) if cached is not None else None
 
 
-async def set_cached_answer(document_id: str, question: str, answer: str) -> None:
+async def set_cached_answer(document_id: str, question: str, answer: str, sources: list[dict]) -> None:
     await redis_client.set(
         build_cache_key(document_id, question),
-        answer,
+        json.dumps({"answer": answer, "sources": sources}),
         ex=settings.query_cache_ttl_seconds,
     )

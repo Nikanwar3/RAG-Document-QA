@@ -38,20 +38,23 @@ async def ask_question(
 
     cached = await get_cached_answer(document_id, payload.question)
     if cached is not None:
-        db.add(QueryLog(document_id=document.id, question=payload.question, answer=cached, cache_hit=True))
+        db.add(QueryLog(document_id=document.id, question=payload.question, answer=cached["answer"], cache_hit=True))
         await db.commit()
-        return QueryResponse(question=payload.question, answer=cached, cache_hit=True)
+        return QueryResponse(
+            question=payload.question, answer=cached["answer"], cache_hit=True, sources=cached["sources"]
+        )
 
     # Both calls are blocking (network + CPU-bound embedding), so run them off
     # the event loop instead of stalling every other concurrent request.
-    context = await run_in_threadpool(vector_store.query_top_chunks, payload.question, document.namespace)
+    chunks = await run_in_threadpool(vector_store.retrieve_chunks, payload.question, document.namespace)
+    context = "\n".join(chunk["text"] for chunk in chunks)
     answer = await run_in_threadpool(llm_client.generate_answer, payload.question, context)
 
-    await set_cached_answer(document_id, payload.question, answer)
+    await set_cached_answer(document_id, payload.question, answer, chunks)
     db.add(QueryLog(document_id=document.id, question=payload.question, answer=answer, cache_hit=False))
     await db.commit()
 
-    return QueryResponse(question=payload.question, answer=answer, cache_hit=False)
+    return QueryResponse(question=payload.question, answer=answer, cache_hit=False, sources=chunks)
 
 
 @router.post("/agent", response_model=QueryAgentResponse)
@@ -71,16 +74,21 @@ async def ask_question_agent(
 
     cached = await get_cached_answer(document_id, payload.question)
     if cached is not None:
-        db.add(QueryLog(document_id=document.id, question=payload.question, answer=cached, cache_hit=True))
+        db.add(QueryLog(document_id=document.id, question=payload.question, answer=cached["answer"], cache_hit=True))
         await db.commit()
         return QueryAgentResponse(
-            question=payload.question, answer=cached, cache_hit=True, retrieval_attempts=0, query_rewritten=False
+            question=payload.question,
+            answer=cached["answer"],
+            cache_hit=True,
+            retrieval_attempts=0,
+            query_rewritten=False,
+            sources=cached["sources"],
         )
 
     result = await run_in_threadpool(qa_agent.answer_question, payload.question, document.namespace)
     answer = result["answer"]
 
-    await set_cached_answer(document_id, payload.question, answer)
+    await set_cached_answer(document_id, payload.question, answer, result["chunks"])
     db.add(QueryLog(document_id=document.id, question=payload.question, answer=answer, cache_hit=False))
     await db.commit()
 
@@ -90,4 +98,5 @@ async def ask_question_agent(
         cache_hit=False,
         retrieval_attempts=result["retrieval_attempts"],
         query_rewritten=result["query_rewritten"],
+        sources=result["chunks"],
     )

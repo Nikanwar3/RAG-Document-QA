@@ -52,6 +52,7 @@ class QAState(TypedDict):
     question: str  # current search query — may have been rewritten
     namespace: str
     context: str
+    chunks: list[dict]  # source chunks backing `context` — id, text, score
     relevant: bool
     retries: int
     answer: str
@@ -115,8 +116,13 @@ def _get_rewriter_chain():
 
 
 def retrieve_node(state: QAState) -> dict:
-    context = vector_store.query_top_chunks(state["question"], state["namespace"])
-    return {"context": context, "retrieval_attempts": state.get("retrieval_attempts", 0) + 1}
+    chunks = vector_store.retrieve_chunks(state["question"], state["namespace"])
+    context = "\n".join(chunk["text"] for chunk in chunks)
+    return {
+        "context": context,
+        "chunks": chunks,
+        "retrieval_attempts": state.get("retrieval_attempts", 0) + 1,
+    }
 
 
 def grade_node(state: QAState) -> dict:
@@ -179,6 +185,7 @@ def answer_question(question: str, namespace: str) -> dict:
             "question": question,
             "namespace": namespace,
             "context": "",
+            "chunks": [],
             "relevant": False,
             "retries": 0,
             "answer": "",
@@ -189,4 +196,5 @@ def answer_question(question: str, namespace: str) -> dict:
         "answer": result["answer"],
         "retrieval_attempts": result["retrieval_attempts"],
         "query_rewritten": result["question"] != question,
+        "chunks": result["chunks"],
     }

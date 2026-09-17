@@ -171,20 +171,47 @@ Poll for status: `pending` → `processing` → `ready` (or `failed`, with
 
 Returns `409` until the document's status is `ready`. Answers are cached in
 Redis per `(document_id, question)` and every call is logged to the
-`query_logs` table with a `cache_hit` flag.
+`query_logs` table with a `cache_hit` flag. The response includes `sources`
+— the retrieved chunks the answer was actually grounded in, each with its
+Pinecone chunk id and similarity score — so a caller can show what backed
+the answer instead of trusting it blind:
+
+```json
+{
+  "question": "What is the grace period for premium payment?",
+  "answer": "30 days",
+  "cache_hit": false,
+  "sources": [
+    { "chunk_id": "doc-chunk-2", "text": "A grace period of thirty days is given...", "score": 0.91 }
+  ]
+}
+```
+
+Cache hits replay the same `sources` that were stored alongside the answer
+on the original (cache-miss) call — sources are recorded once, not
+re-retrieved on every hit.
 
 ### `POST /query/agent`
 
-Same request/response shape as `POST /query`, answered by the LangGraph
-agent instead of a single retrieve-then-generate pass:
+Same request/response shape as `POST /query` (including `sources`), answered
+by the LangGraph agent instead of a single retrieve-then-generate pass:
 
 ```json
-{ "question": "...", "answer": "...", "cache_hit": false, "retrieval_attempts": 2, "query_rewritten": true }
+{
+  "question": "...",
+  "answer": "...",
+  "cache_hit": false,
+  "retrieval_attempts": 2,
+  "query_rewritten": true,
+  "sources": [ { "chunk_id": "...", "text": "...", "score": 0.83 } ]
+}
 ```
 
 `retrieval_attempts` and `query_rewritten` surface whether the agent had to
 grade the first retrieval as irrelevant and self-correct — see
-`app/services/qa_agent.py` for the graph.
+`app/services/qa_agent.py` for the graph. `sources` reflects whichever
+retrieval (first pass or post-rewrite retry) the final answer was generated
+from.
 
 ### `GET /health`
 

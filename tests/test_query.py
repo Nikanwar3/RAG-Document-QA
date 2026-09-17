@@ -34,18 +34,17 @@ async def test_query_flow_with_cache(client, db_session, monkeypatch):
     # Fake Redis: exercises the same cache-hit/cache-miss branching in the
     # route without requiring a live Redis instance for this unit test.
     fake_cache = {}
+    fake_chunks = [{"chunk_id": "doc-chunk-0", "text": "grace period is 30 days", "score": 0.92}]
 
     async def fake_get_cached_answer(document_id, question):
         return fake_cache.get((document_id, question))
 
-    async def fake_set_cached_answer(document_id, question, answer):
-        fake_cache[(document_id, question)] = answer
+    async def fake_set_cached_answer(document_id, question, answer, sources):
+        fake_cache[(document_id, question)] = {"answer": answer, "sources": sources}
 
     monkeypatch.setattr(query_router, "get_cached_answer", fake_get_cached_answer)
     monkeypatch.setattr(query_router, "set_cached_answer", fake_set_cached_answer)
-    monkeypatch.setattr(
-        query_router.vector_store, "query_top_chunks", lambda q, ns, top_k=3: "grace period is 30 days"
-    )
+    monkeypatch.setattr(query_router.vector_store, "retrieve_chunks", lambda q, ns, top_k=3: fake_chunks)
     monkeypatch.setattr(query_router.llm_client, "generate_answer", lambda q, c: "30 days")
 
     headers = await _auth_headers(client)
@@ -58,10 +57,13 @@ async def test_query_flow_with_cache(client, db_session, monkeypatch):
     body = first.json()
     assert body["answer"] == "30 days"
     assert body["cache_hit"] is False
+    assert body["sources"] == fake_chunks
 
     second = await client.post("/query", json=payload, headers=headers)
     assert second.status_code == 200
-    assert second.json()["cache_hit"] is True
+    second_body = second.json()
+    assert second_body["cache_hit"] is True
+    assert second_body["sources"] == fake_chunks
 
 
 @pytest.mark.asyncio
@@ -69,12 +71,13 @@ async def test_query_agent_flow_with_cache(client, db_session, monkeypatch):
     from app.routers import query as query_router
 
     fake_cache = {}
+    fake_chunks = [{"chunk_id": "doc-chunk-1", "text": "grace period is 30 days", "score": 0.88}]
 
     async def fake_get_cached_answer(document_id, question):
         return fake_cache.get((document_id, question))
 
-    async def fake_set_cached_answer(document_id, question, answer):
-        fake_cache[(document_id, question)] = answer
+    async def fake_set_cached_answer(document_id, question, answer, sources):
+        fake_cache[(document_id, question)] = {"answer": answer, "sources": sources}
 
     monkeypatch.setattr(query_router, "get_cached_answer", fake_get_cached_answer)
     monkeypatch.setattr(query_router, "set_cached_answer", fake_set_cached_answer)
@@ -85,7 +88,12 @@ async def test_query_agent_flow_with_cache(client, db_session, monkeypatch):
     monkeypatch.setattr(
         query_router.qa_agent,
         "answer_question",
-        lambda q, ns: {"answer": "30 days", "retrieval_attempts": 2, "query_rewritten": True},
+        lambda q, ns: {
+            "answer": "30 days",
+            "retrieval_attempts": 2,
+            "query_rewritten": True,
+            "chunks": fake_chunks,
+        },
     )
 
     headers = await _auth_headers(client, email="agent-query-user@example.com")
@@ -100,10 +108,13 @@ async def test_query_agent_flow_with_cache(client, db_session, monkeypatch):
     assert body["cache_hit"] is False
     assert body["retrieval_attempts"] == 2
     assert body["query_rewritten"] is True
+    assert body["sources"] == fake_chunks
 
     second = await client.post("/query/agent", json=payload, headers=headers)
     assert second.status_code == 200
-    assert second.json()["cache_hit"] is True
+    second_body = second.json()
+    assert second_body["cache_hit"] is True
+    assert second_body["sources"] == fake_chunks
 
 
 @pytest.mark.asyncio

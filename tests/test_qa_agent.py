@@ -20,7 +20,12 @@ def test_relevant_on_first_try_never_rewrites(monkeypatch):
 
     result = qa_agent.answer_question("what is the notice period?", "ns-1")
 
-    assert result == {"answer": "30 days", "retrieval_attempts": 1, "query_rewritten": False}
+    assert result == {
+        "answer": "30 days",
+        "retrieval_attempts": 1,
+        "query_rewritten": False,
+        "chunks": [],
+    }
 
 
 def test_irrelevant_then_relevant_rewrites_once_and_retries_retrieval(monkeypatch):

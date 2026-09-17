@@ -45,10 +45,17 @@ class QueryRequest(BaseModel):
     question: str
 
 
+class SourceChunk(BaseModel):
+    chunk_id: str
+    text: str
+    score: float
+
+
 class QueryResponse(BaseModel):
     question: str
     answer: str
     cache_hit: bool
+    sources: list[SourceChunk] = []
 
 
 class QueryAgentResponse(BaseModel):
@@ -57,6 +64,7 @@ class QueryAgentResponse(BaseModel):
     cache_hit: bool
     retrieval_attempts: int
     query_rewritten: bool
+    sources: list[SourceChunk] = []
 
 
 class HealthResponse(BaseModel):

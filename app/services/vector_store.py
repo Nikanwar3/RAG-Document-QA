@@ -38,10 +38,25 @@ def embed_and_store_chunks(chunks: list[str], namespace: str) -> None:
     index.upsert(vectors=vectors, namespace=namespace)
 
 
-def query_top_chunks(query: str, namespace: str, top_k: int = 3) -> str:
-    """Retrieve the top-k most similar chunks for a question, scoped to one document."""
+def _query_index(query: str, namespace: str, top_k: int) -> list:
     model = _get_model()
     index = _get_index()
     query_vec = model.encode([query])[0].tolist()
     res = index.query(vector=query_vec, top_k=top_k, include_metadata=True, namespace=namespace)
-    return "\n".join(match["metadata"]["text"] for match in res["matches"])
+    return res["matches"]
+
+
+def query_top_chunks(query: str, namespace: str, top_k: int = 3) -> str:
+    """Retrieve the top-k most similar chunks for a question, scoped to one document."""
+    return "\n".join(match["metadata"]["text"] for match in _query_index(query, namespace, top_k))
+
+
+def retrieve_chunks(query: str, namespace: str, top_k: int = 3) -> list[dict]:
+    """Same retrieval as query_top_chunks, but keeps each chunk's id and
+    similarity score instead of collapsing everything into one context
+    string — callers that need to cite what backed an answer (routers/query.py,
+    qa_agent.py) use this instead."""
+    return [
+        {"chunk_id": match["id"], "text": match["metadata"]["text"], "score": match["score"]}
+        for match in _query_index(query, namespace, top_k)
+    ]
