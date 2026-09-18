@@ -8,6 +8,7 @@ ignore = [
     "B008",   # FastAPI's Depends(...)-as-default is the framework's own idiom
     "BLE001", # a couple of intentional catch-all error boundaries (LLM call, legacy endpoint)
     "TRY002", # plain Exception is fine for this project's size; no custom hierarchy needed
+    "ISC004", # multi-line prompt strings use intentional implicit concatenation
 ]
 
 [tool.pytest.ini_options]
