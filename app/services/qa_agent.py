@@ -9,17 +9,26 @@ concrete entities/terms the question is really asking about) and retries
 retrieval before generating — a self-correcting flow ("Corrective RAG")
 instead of confidently answering off a bad first retrieval.
 
+A relevant retrieval doesn't guarantee a grounded answer — the generator can
+still drift into wording that overstates or invents details the context
+never said. So after generating, a groundedness grader checks the answer
+against the context it was built from; an ungrounded answer is replaced with
+the same abstention text the generator itself would use for missing info,
+rather than letting a plausible-sounding hallucination reach the caller.
+
 Graph:
 
-    retrieve --> grade --[relevant, or out of retries]--> generate --> END
-                   |
-                   `--[not relevant, retries left]--> rewrite_query --> retrieve (loop)
+    retrieve --> grade --[relevant, or out of retries]--> generate --> check_groundedness --[grounded]--> END
+                   |                                                          |
+                   `--[not relevant, retries left]--> rewrite_query           `--[not grounded]--> abstain --> END
+                            |
+                            `--> retrieve (loop)
 
 Every node is a plain function over `QAState` so the control flow (who talks
-to whom, and when) is explicit and independently testable — `grade_node` and
-`rewrite_node` are the only nodes that make LLM calls, and both are cheap to
-monkeypatch out in tests (see tests/test_qa_agent.py) without touching the
-graph wiring itself.
+to whom, and when) is explicit and independently testable — `grade_node`,
+`rewrite_node`, and `check_groundedness_node` are the only nodes that make
+LLM calls, and all are cheap to monkeypatch out in tests (see
+tests/test_qa_agent.py) without touching the graph wiring itself.
 """
 from typing import TypedDict
 
@@ -38,12 +47,27 @@ from app.services import llm_client, vector_store
 # than loop forever chasing a relevant chunk that doesn't exist.
 MAX_RETRIES = 2
 
+# Text substituted in for an answer the groundedness grader rejects — the
+# same abstention wording llm_client's own prompt rules ask the generator to
+# use for genuinely missing information, so a caller can't tell "the model
+# said so itself" apart from "the agent caught it lying" from the text alone.
+ABSTENTION_TEXT = "Not mentioned in the document."
+
 
 class RelevanceGrade(BaseModel):
     """Structured grader output — a forced boolean beats parsing free text."""
 
     relevant: bool = Field(
         description="True if the retrieved context contains information that answers the question."
+    )
+
+
+class GroundednessGrade(BaseModel):
+    """Structured grader output for the post-generation hallucination check."""
+
+    grounded: bool = Field(
+        description="True if every claim in the answer is directly supported by the context — "
+        "no invented figures, entities, or specifics the context doesn't state."
     )
 
 
@@ -57,6 +81,7 @@ class QAState(TypedDict):
     retries: int
     answer: str
     retrieval_attempts: int
+    grounded: bool
 
 
 GRADE_PROMPT = ChatPromptTemplate.from_messages(
@@ -91,12 +116,27 @@ REWRITE_PROMPT = ChatPromptTemplate.from_messages(
     ]
 )
 
+GROUNDEDNESS_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "You are a strict fact-checker for a document Q&A system. Given the context an "
+            "answer was generated from and the answer itself, decide whether every claim in "
+            "the answer is directly supported by the context. Be strict: a figure, date, "
+            "entity, or clause that isn't stated in the context — even if plausible — is not "
+            "grounded. An answer that says information is missing is always grounded.",
+        ),
+        ("human", "CONTEXT:\n{context}\n\nANSWER:\n{answer}"),
+    ]
+)
+
 # Lazily built, module-level singletons — same reasoning as llm_client._get_chain:
 # importing this module must never require live credentials (keeps unit tests
 # and `alembic` runs import-safe), and there's no reason to rebuild the chain
 # on every graph invocation.
 _grader_chain = None
 _rewriter_chain = None
+_groundedness_chain = None
 
 
 def _get_grader_chain():
@@ -113,6 +153,14 @@ def _get_rewriter_chain():
         llm = ChatGroq(model="llama3-8b-8192", temperature=0.0, max_tokens=60, api_key=settings.groq_api_key)
         _rewriter_chain = REWRITE_PROMPT | llm | StrOutputParser()
     return _rewriter_chain
+
+
+def _get_groundedness_chain():
+    global _groundedness_chain
+    if _groundedness_chain is None:
+        llm = ChatGroq(model="llama3-8b-8192", temperature=0.0, api_key=settings.groq_api_key)
+        _groundedness_chain = GROUNDEDNESS_PROMPT | llm.with_structured_output(GroundednessGrade)
+    return _groundedness_chain
 
 
 def retrieve_node(state: QAState) -> dict:
@@ -151,10 +199,29 @@ def generate_node(state: QAState) -> dict:
     return {"answer": answer}
 
 
+def check_groundedness_node(state: QAState) -> dict:
+    # An answer that's already the abstention text has nothing to fact-check
+    # against the context — skip the LLM call and just pass it through.
+    if state["answer"].strip() == ABSTENTION_TEXT:
+        return {"grounded": True}
+    grade: GroundednessGrade = _get_groundedness_chain().invoke(
+        {"context": state["context"], "answer": state["answer"]}
+    )
+    return {"grounded": grade.grounded}
+
+
+def abstain_node(state: QAState) -> dict:
+    return {"answer": ABSTENTION_TEXT}
+
+
 def _route_after_grade(state: QAState) -> str:
     if state["relevant"] or state.get("retries", 0) >= MAX_RETRIES:
         return "generate"
     return "rewrite"
+
+
+def _route_after_groundedness(state: QAState) -> str:
+    return "done" if state["grounded"] else "abstain"
 
 
 def build_graph():
@@ -165,12 +232,18 @@ def build_graph():
     graph.add_node("grade", grade_node)
     graph.add_node("rewrite", rewrite_node)
     graph.add_node("generate", generate_node)
+    graph.add_node("check_groundedness", check_groundedness_node)
+    graph.add_node("abstain", abstain_node)
 
     graph.set_entry_point("retrieve")
     graph.add_edge("retrieve", "grade")
     graph.add_conditional_edges("grade", _route_after_grade, {"generate": "generate", "rewrite": "rewrite"})
     graph.add_edge("rewrite", "retrieve")
-    graph.add_edge("generate", END)
+    graph.add_edge("generate", "check_groundedness")
+    graph.add_conditional_edges(
+        "check_groundedness", _route_after_groundedness, {"done": END, "abstain": "abstain"}
+    )
+    graph.add_edge("abstain", END)
 
     return graph.compile()
 
@@ -190,11 +263,13 @@ def answer_question(question: str, namespace: str) -> dict:
             "retries": 0,
             "answer": "",
             "retrieval_attempts": 0,
+            "grounded": False,
         }
     )
     return {
         "answer": result["answer"],
         "retrieval_attempts": result["retrieval_attempts"],
         "query_rewritten": result["question"] != question,
+        "grounded": result["grounded"],
         "chunks": result["chunks"],
     }

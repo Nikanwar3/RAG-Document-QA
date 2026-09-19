@@ -50,11 +50,16 @@ reasoning happens around the retrieval:
   that grades whether the retrieved chunks actually answer the question
   before generating, and rewrites the search query and retries retrieval
   (capped at 2 attempts) if they don't — a self-correcting ("Corrective
-  RAG") flow instead of confidently answering off a bad first retrieval:
+  RAG") flow instead of confidently answering off a bad first retrieval.
+  After generating, a second grader checks the answer against its own
+  context and swaps in the same abstention text used for missing info if
+  it finds a claim the context doesn't actually support — a lightweight
+  hallucination guard, not just a retrieval guard:
 
   ```
-  retrieve → grade →[relevant, or out of retries]→ generate → done
-               │
+  retrieve → grade →[relevant, or out of retries]→ generate → check groundedness →[grounded]→ done
+               │                                                       │
+               │                                                       └──[not grounded]──→ abstain → done
                └──[not relevant, retries left]──→ rewrite query → retrieve (loop)
   ```
 
@@ -203,12 +208,15 @@ by the LangGraph agent instead of a single retrieve-then-generate pass:
   "cache_hit": false,
   "retrieval_attempts": 2,
   "query_rewritten": true,
+  "grounded": true,
   "sources": [ { "chunk_id": "...", "text": "...", "score": 0.83 } ]
 }
 ```
 
 `retrieval_attempts` and `query_rewritten` surface whether the agent had to
-grade the first retrieval as irrelevant and self-correct — see
+grade the first retrieval as irrelevant and self-correct; `grounded` surfaces
+whether the generated answer passed the post-generation fact-check against
+its own context, or was replaced with the abstention text — see
 `app/services/qa_agent.py` for the graph. `sources` reflects whichever
 retrieval (first pass or post-rewrite retry) the final answer was generated
 from.

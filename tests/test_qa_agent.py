@@ -17,6 +17,7 @@ def test_relevant_on_first_try_never_rewrites(monkeypatch):
     monkeypatch.setattr(qa_agent, "grade_node", lambda s: {"relevant": True})
     monkeypatch.setattr(qa_agent, "rewrite_node", lambda s: pytest_fail_if_called())
     monkeypatch.setattr(qa_agent, "generate_node", lambda s: {"answer": "30 days"})
+    monkeypatch.setattr(qa_agent, "check_groundedness_node", lambda s: {"grounded": True})
 
     result = qa_agent.answer_question("what is the notice period?", "ns-1")
 
@@ -24,6 +25,7 @@ def test_relevant_on_first_try_never_rewrites(monkeypatch):
         "answer": "30 days",
         "retrieval_attempts": 1,
         "query_rewritten": False,
+        "grounded": True,
         "chunks": [],
     }
 
@@ -43,6 +45,7 @@ def test_irrelevant_then_relevant_rewrites_once_and_retries_retrieval(monkeypatc
         "question": s["question"] + "-rewritten", "retries": s.get("retries", 0) + 1,
     })
     monkeypatch.setattr(qa_agent, "generate_node", lambda s: {"answer": f"FINAL:{s['context']}"})
+    monkeypatch.setattr(qa_agent, "check_groundedness_node", lambda s: {"grounded": True})
 
     result = qa_agent.answer_question("vague question", "ns-1")
 
@@ -62,6 +65,7 @@ def test_never_relevant_stops_after_max_retries_and_still_answers(monkeypatch):
         "question": s["question"] + "-r", "retries": s.get("retries", 0) + 1,
     })
     monkeypatch.setattr(qa_agent, "generate_node", lambda s: {"answer": "Not mentioned in the document."})
+    monkeypatch.setattr(qa_agent, "check_groundedness_node", lambda s: {"grounded": True})
 
     result = qa_agent.answer_question("unanswerable question", "ns-1")
 
@@ -75,6 +79,40 @@ def test_route_after_grade():
     assert qa_agent._route_after_grade({"relevant": False, "retries": 0}) == "rewrite"
     # Out of retries overrides an irrelevant grade — don't loop forever.
     assert qa_agent._route_after_grade({"relevant": False, "retries": qa_agent.MAX_RETRIES}) == "generate"
+
+
+def test_route_after_groundedness():
+    assert qa_agent._route_after_groundedness({"grounded": True}) == "done"
+    assert qa_agent._route_after_groundedness({"grounded": False}) == "abstain"
+
+
+def test_ungrounded_answer_is_replaced_with_abstention(monkeypatch):
+    monkeypatch.setattr(qa_agent, "retrieve_node", lambda s: {
+        "context": "the notice period is 60 days", "retrieval_attempts": s.get("retrieval_attempts", 0) + 1,
+    })
+    monkeypatch.setattr(qa_agent, "grade_node", lambda s: {"relevant": True})
+    monkeypatch.setattr(qa_agent, "rewrite_node", lambda s: pytest_fail_if_called())
+    # A hallucinated answer the context never actually said.
+    monkeypatch.setattr(qa_agent, "generate_node", lambda s: {"answer": "the notice period is 90 days"})
+    monkeypatch.setattr(qa_agent, "check_groundedness_node", lambda s: {"grounded": False})
+
+    result = qa_agent.answer_question("what is the notice period?", "ns-1")
+
+    assert result["answer"] == qa_agent.ABSTENTION_TEXT
+    assert result["grounded"] is False
+
+
+def test_check_groundedness_node_skips_llm_call_for_existing_abstention(monkeypatch):
+    def fail_if_called():
+        raise AssertionError("groundedness chain should not be invoked for an already-abstained answer")
+
+    monkeypatch.setattr(qa_agent, "_get_groundedness_chain", fail_if_called)
+
+    result = qa_agent.check_groundedness_node(
+        {"answer": qa_agent.ABSTENTION_TEXT, "context": "irrelevant context"}
+    )
+
+    assert result == {"grounded": True}
 
 
 def pytest_fail_if_called():

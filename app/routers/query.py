@@ -82,6 +82,7 @@ async def ask_question_agent(
             cache_hit=True,
             retrieval_attempts=0,
             query_rewritten=False,
+            grounded=True,
             sources=cached["sources"],
         )
 
@@ -98,5 +99,6 @@ async def ask_question_agent(
         cache_hit=False,
         retrieval_attempts=result["retrieval_attempts"],
         query_rewritten=result["query_rewritten"],
+        grounded=result["grounded"],
         sources=result["chunks"],
     )

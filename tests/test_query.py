@@ -92,6 +92,7 @@ async def test_query_agent_flow_with_cache(client, db_session, monkeypatch):
             "answer": "30 days",
             "retrieval_attempts": 2,
             "query_rewritten": True,
+            "grounded": True,
             "chunks": fake_chunks,
         },
     )
@@ -108,6 +109,7 @@ async def test_query_agent_flow_with_cache(client, db_session, monkeypatch):
     assert body["cache_hit"] is False
     assert body["retrieval_attempts"] == 2
     assert body["query_rewritten"] is True
+    assert body["grounded"] is True
     assert body["sources"] == fake_chunks
 
     second = await client.post("/query/agent", json=payload, headers=headers)

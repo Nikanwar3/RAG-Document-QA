@@ -64,6 +64,7 @@ class QueryAgentResponse(BaseModel):
     cache_hit: bool
     retrieval_attempts: int
     query_rewritten: bool
+    grounded: bool
     sources: list[SourceChunk] = []
 
 
