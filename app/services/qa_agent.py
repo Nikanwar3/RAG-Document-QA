@@ -12,15 +12,18 @@ instead of confidently answering off a bad first retrieval.
 A relevant retrieval doesn't guarantee a grounded answer — the generator can
 still drift into wording that overstates or invents details the context
 never said. So after generating, a groundedness grader checks the answer
-against the context it was built from; an ungrounded answer is replaced with
-the same abstention text the generator itself would use for missing info,
-rather than letting a plausible-sounding hallucination reach the caller.
+against the context it was built from; an ungrounded answer would otherwise
+be replaced outright with abstention text, but before giving up, `abstain_node`
+tries one more thing: a live web search (Tavily), so a question the document
+genuinely doesn't cover can still get answered instead of dead-ending. Only
+falls back to abstention text if no API key is configured or the web search
+itself comes up empty.
 
 Graph:
 
     retrieve --> grade --[relevant, or out of retries]--> generate --> check_groundedness --[grounded]--> END
                    |                                                          |
-                   `--[not relevant, retries left]--> rewrite_query           `--[not grounded]--> abstain --> END
+                   `--[not relevant, retries left]--> rewrite_query           `--[not grounded]--> abstain (web search fallback) --> END
                             |
                             `--> retrieve (loop)
 
@@ -39,7 +42,7 @@ from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.services import llm_client, vector_store
+from app.services import llm_client, vector_store, web_search
 
 # Cap on rewrite+re-retrieve cycles. Bounded on purpose — an ungrounded
 # question (nothing in the document answers it) should fall through to
@@ -82,6 +85,7 @@ class QAState(TypedDict):
     answer: str
     retrieval_attempts: int
     grounded: bool
+    web_search_used: bool
 
 
 GRADE_PROMPT = ChatPromptTemplate.from_messages(
@@ -211,7 +215,18 @@ def check_groundedness_node(state: QAState) -> dict:
 
 
 def abstain_node(state: QAState) -> dict:
-    return {"answer": ABSTENTION_TEXT}
+    """Last resort before giving up: try a live web search. Falls back to
+    plain abstention if no API key is configured, the search returns nothing,
+    or the web results don't answer the question either."""
+    results = web_search.search_web(state["original_question"])
+    if not results:
+        return {"answer": ABSTENTION_TEXT, "web_search_used": False}
+
+    web_context = "\n".join(f"{r['title']}: {r['content']}" for r in results)
+    answer = llm_client.generate_web_answer(state["original_question"], web_context)
+    if not answer.strip() or answer.strip() == ABSTENTION_TEXT:
+        return {"answer": ABSTENTION_TEXT, "web_search_used": False}
+    return {"answer": answer, "web_search_used": True}
 
 
 def _route_after_grade(state: QAState) -> str:
@@ -264,6 +279,7 @@ def answer_question(question: str, namespace: str) -> dict:
             "answer": "",
             "retrieval_attempts": 0,
             "grounded": False,
+            "web_search_used": False,
         }
     )
     return {
@@ -272,4 +288,5 @@ def answer_question(question: str, namespace: str) -> dict:
         "query_rewritten": result["question"] != question,
         "grounded": result["grounded"],
         "chunks": result["chunks"],
+        "web_search_used": result["web_search_used"],
     }

@@ -27,6 +27,7 @@ def test_relevant_on_first_try_never_rewrites(monkeypatch):
         "query_rewritten": False,
         "grounded": True,
         "chunks": [],
+        "web_search_used": False,
     }
 
 
@@ -113,6 +114,40 @@ def test_check_groundedness_node_skips_llm_call_for_existing_abstention(monkeypa
     )
 
     assert result == {"grounded": True}
+
+
+def test_abstain_node_falls_back_to_plain_abstention_when_web_search_finds_nothing(monkeypatch):
+    monkeypatch.setattr(qa_agent.web_search, "search_web", lambda query: [])
+
+    result = qa_agent.abstain_node({"original_question": "what is the notice period?"})
+
+    assert result == {"answer": qa_agent.ABSTENTION_TEXT, "web_search_used": False}
+
+
+def test_abstain_node_answers_from_web_search_when_document_has_nothing(monkeypatch):
+    monkeypatch.setattr(
+        qa_agent.web_search,
+        "search_web",
+        lambda query: [{"title": "Some Law", "url": "https://example.com", "content": "The notice period is 60 days."}],
+    )
+    monkeypatch.setattr(qa_agent.llm_client, "generate_web_answer", lambda q, ctx: "From the web: 60 days.")
+
+    result = qa_agent.abstain_node({"original_question": "what is the notice period?"})
+
+    assert result == {"answer": "From the web: 60 days.", "web_search_used": True}
+
+
+def test_abstain_node_falls_back_to_plain_abstention_when_web_answer_is_also_abstention(monkeypatch):
+    monkeypatch.setattr(
+        qa_agent.web_search,
+        "search_web",
+        lambda query: [{"title": "Unrelated", "url": "https://example.com", "content": "irrelevant"}],
+    )
+    monkeypatch.setattr(qa_agent.llm_client, "generate_web_answer", lambda q, ctx: qa_agent.ABSTENTION_TEXT)
+
+    result = qa_agent.abstain_node({"original_question": "what is the notice period?"})
+
+    assert result == {"answer": qa_agent.ABSTENTION_TEXT, "web_search_used": False}
 
 
 def pytest_fail_if_called():

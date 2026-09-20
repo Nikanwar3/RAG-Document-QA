@@ -100,5 +100,6 @@ async def ask_question_agent(
         retrieval_attempts=result["retrieval_attempts"],
         query_rewritten=result["query_rewritten"],
         grounded=result["grounded"],
+        web_search_used=result["web_search_used"],
         sources=result["chunks"],
     )

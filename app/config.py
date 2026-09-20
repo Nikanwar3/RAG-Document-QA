@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     pinecone_index: str | None = None
     embedding_model: str = "all-MiniLM-L6-v2"
 
+    # --- Web search fallback (used when the document has no answer) ---
+    tavily_api_key: str | None = None
+
     # --- Legacy HackRx grader endpoint (kept for backward compatibility) ---
     hackrx_token: str | None = None
 

@@ -94,6 +94,7 @@ async def test_query_agent_flow_with_cache(client, db_session, monkeypatch):
             "query_rewritten": True,
             "grounded": True,
             "chunks": fake_chunks,
+            "web_search_used": False,
         },
     )
 
@@ -110,6 +111,7 @@ async def test_query_agent_flow_with_cache(client, db_session, monkeypatch):
     assert body["retrieval_attempts"] == 2
     assert body["query_rewritten"] is True
     assert body["grounded"] is True
+    assert body["web_search_used"] is False
     assert body["sources"] == fake_chunks
 
     second = await client.post("/query/agent", json=payload, headers=headers)

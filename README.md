@@ -59,9 +59,16 @@ reasoning happens around the retrieval:
   ```
   retrieve → grade →[relevant, or out of retries]→ generate → check groundedness →[grounded]→ done
                │                                                       │
-               │                                                       └──[not grounded]──→ abstain → done
+               │                                                       └──[not grounded]──→ abstain (web search fallback) → done
                └──[not relevant, retries left]──→ rewrite query → retrieve (loop)
   ```
+
+  Before giving up, `abstain` tries one more thing: a live web search
+  (Tavily), so a question the document genuinely doesn't cover can still get
+  answered instead of dead-ending in "Not mentioned in the document." — the
+  web-sourced answer is prefixed with "From the web:" so it's never confused
+  with a claim the document actually made. Falls back to plain abstention if
+  `TAVILY_API_KEY` isn't set or the search comes up empty.
 
 -----
 
