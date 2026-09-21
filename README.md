@@ -1,7 +1,5 @@
 # RAG Document QA
 
-**Author: Nidhi Kanwar — Junior AI Engineer | Generative AI | RAG Systems**
-
 An LLM-powered document question-answering service. Upload a document, it's
 processed asynchronously and embedded into Pinecone, and questions against it
 are answered by an LLM with retrieved context — cached in Redis and logged to
