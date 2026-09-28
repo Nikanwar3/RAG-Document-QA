@@ -242,13 +242,42 @@ ingestion, no Postgres/Redis involved. New integrations should use the
 ## Testing
 
 ```bash
-pytest -v
+pytest -v --cov=app
 ```
 
 Tests run against an in-memory SQLite database and mock out Pinecone, the
 Groq LLM call, Redis, and the Celery `.delay()` call — no external services
 or credentials required. CI (`.github/workflows/ci.yml`) additionally spins
 up real Postgres and Redis containers and does a Docker image build.
+
+-----
+
+## Verified
+
+34 tests passing, 67% line coverage (up from 25 tests / 59% — `document_processor.py`
+specifically went from 12% to 83%; see `tests/test_document_processor.py`, which
+exercises the PDF/DOCX/EML extraction and the chunker against fixtures generated
+on the fly rather than checked-in binaries).
+
+That pass over `document_processor.py` caught a real bug: `chunk_text`'s `overlap`
+parameter was accepted but never used — every chunk started fresh from the current
+line with zero carry-over from the previous one, silently defeating the entire
+point of chunk overlap (preserving context across a chunk boundary so a sentence
+split mid-chunk doesn't lose one half of its meaning). Fixed to actually seed each
+new chunk with the trailing `overlap` characters of the one before it.
+
+Also fixed: `pyproject.toml` listed a ruff ignore code, `ISC004`, that isn't a real
+rule (should have been `ISC002`) — harmless while `requirements-dev.txt` had `ruff`
+floating at whatever `>=0.4.0` resolved to on a given CI run, but the next ruff
+release to actually validate that code would have broken `ruff check` in CI on the
+next push. Fixed the code and pinned `ruff==0.7.4` so this doesn't silently recur.
+
+**Not measured — needs paid Groq/Pinecone credentials this pass didn't have:**
+answer accuracy against a question set, cache-hit vs. cache-miss latency on real
+answers, and real ingestion timing through the Pinecone upsert step. The parts of
+the pipeline that don't need a live LLM/vector-store call (auth, document
+metadata, chunking/extraction, the corrective-RAG agent's control flow) are
+covered by the test suite above with all externals mocked.
 
 -----
 

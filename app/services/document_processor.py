@@ -98,16 +98,23 @@ def extract_text_from_document(file_path: str) -> str:
 
 
 def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]:
-    """Split text into chunks."""
+    """Split text into chunks of roughly chunk_size characters. Each chunk after
+    the first is seeded with the trailing `overlap` characters of the previous
+    chunk, so a sentence split across a chunk boundary still has its context on
+    both sides — otherwise retrieval over the second half of a split sentence
+    has no way to recover what the first half said.
+    """
     lines = text.split("\n")
     chunks = []
     chunk = ""
     for line in lines:
-        if len(chunk) + len(line) < chunk_size:
-            chunk += line.strip() + " "
+        stripped = line.strip()
+        if len(chunk) + len(stripped) < chunk_size:
+            chunk += stripped + " "
         else:
             chunks.append(chunk.strip())
-            chunk = line.strip() + " "
-    if chunk:
+            carry = chunk[-overlap:] if overlap > 0 else ""
+            chunk = carry + stripped + " "
+    if chunk.strip():
         chunks.append(chunk.strip())
     return chunks
